@@ -1,130 +1,82 @@
 package com.georgeslebatoon.frenchvo;
-
-import android.app.Activity;
+import android.app.*;
 import android.content.*;
 import android.media.MediaPlayer;
 import android.net.Uri;
-import android.os.*;
+import android.os.Bundle;
 import android.provider.MediaStore;
-import android.speech.tts.*;
+import android.text.InputType;
 import android.widget.*;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
-    private TextToSpeech tts;
-    private TomEngine tom;
-    private EditText input;
-    private Spinner voices;
-    private TextView status, speedLabel;
-    private Button preview, save;
-    private float rate=1f;
-    private boolean androidReady=false, destroyed=false;
-    private final List<Voice> systemVoices=new ArrayList<>();
-    private final ExecutorService worker=Executors.newSingleThreadExecutor();
-    private volatile int generation=0;
-    private MediaPlayer player;
-    private File systemFile;
-    private String systemId;
-    private boolean systemSave;
-
-    @Override public void onCreate(Bundle b) {
-        super.onCreate(b); setContentView(R.layout.activity_main);
-        input=findViewById(R.id.textInput); voices=findViewById(R.id.voiceSpinner);
-        status=findViewById(R.id.statusText); speedLabel=findViewById(R.id.speedLabel);
-        preview=findViewById(R.id.previewButton); save=findViewById(R.id.saveButton);
-        tom=new TomEngine(getApplicationContext());
-        setVoices(); status.setText("Tom — voix masculine intégrée. Maximum : 30 000 caractères. Gardez l’application ouverte pendant la génération.");
-        ((SeekBar)findViewById(R.id.speedSeek)).setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            public void onProgressChanged(SeekBar s,int p,boolean u){rate=.7f+p/100f;speedLabel.setText(String.format(Locale.FRANCE,"Vitesse : %.2f×",rate));}
-            public void onStartTrackingTouch(SeekBar s){} public void onStopTrackingTouch(SeekBar s){}
-        });
-        preview.setOnClickListener(v->start(false)); save.setOnClickListener(v->start(true));
-        findViewById(R.id.stopButton).setOnClickListener(v->{cancel();busy(false);status.setText("Arrêté.");});
-        tts=new TextToSpeech(this, code->{
-            if(code==TextToSpeech.SUCCESS) runOnUiThread(()->{
-                androidReady=true;
-                if(tts.getVoices()!=null) for(Voice voice:tts.getVoices())
-                    if("fr".equals(voice.getLocale().getLanguage())) systemVoices.add(voice);
-                systemVoices.sort(Comparator.comparing(Voice::getName)); setVoices();
-                tts.setOnUtteranceProgressListener(new UtteranceProgressListener(){
-                    public void onStart(String id){}
-                    public void onDone(String id){
-                        if(!id.equals(systemId))return;
-                        final int job=generation; final File file=systemFile;
-                        if(systemSave)worker.execute(()->{try{export(file,job);}catch(Exception e){fail(e,job);}finally{file.delete();}});
-                        else runOnUiThread(()->{if(job==generation){busy(false);status.setText("Terminé.");}});
-                    }
-                    public void onError(String id){if(id.equals(systemId))fail(new Exception("Erreur du moteur Android"),generation);}
-                });
-            });
-        });
+ private EditText script,key,directions;private Spinner voice,style;private TextView status;
+ private Button generate,listen,save;private volatile int job=0;private volatile boolean destroyed=false;
+ private final ExecutorService worker=Executors.newSingleThreadExecutor();private final GeminiVoice api=new GeminiVoice();
+ private MediaPlayer player;private File finished;
+ private static final String[] VOICES={"Charon","Puck","Kore","Aoede"};
+ private static final String[] STYLES={"natural conversational storytelling, varied intonation, warm and engaging","energetic and enthusiastic, lively but not shouting","intriguing mysterious storytelling with suspense","amused playful storytelling with a smile","serious documentary narration","calm and reassuring delivery","whispering softly"};
+ @Override public void onCreate(Bundle state){
+  super.onCreate(state);ScrollView scroll=new ScrollView(this);LinearLayout layout=new LinearLayout(this);layout.setOrientation(1);layout.setPadding(32,24,32,30);scroll.addView(layout);setContentView(scroll);
+  label(layout,"French VO — Expressif",24);
+  label(layout,"Voix et émotions avec Gemini • Internet requis • Quotas Google. Le texte est envoyé à Google lorsque vous générez.",14);
+  Button setup=button(layout,"1. Obtenir une clé Google AI Studio");setup.setOnClickListener(v->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://aistudio.google.com/apikey"))));
+  key=edit(layout,"Collez votre clé API ici (elle reste dans cette session)",1);key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+  label(layout,"Utilisez un projet Google sans facturation pour rester dans le quota gratuit. La clé n’est ni intégrée à l’APK ni enregistrée sur le téléphone.",14);
+  label(layout,"Voix",17);voice=spinner(layout,new String[]{"Charon — homme","Puck — homme","Kore — femme","Aoede — femme"});
+  label(layout,"Style de narration",17);style=spinner(layout,new String[]{"Naturel / YouTube","Énergique","Mystère","Amusé","Documentaire","Calme","Chuchoté"});
+  directions=edit(layout,"Direction supplémentaire (facultatif) : ton curieux, accent français, rythme vivant…",2);
+  script=edit(layout,"Collez le texte français. Exemple : [mystère] Tu entends ce bruit ? [pause] [amusé] C’est juste ton frigo !",9);
+  label(layout,"Balises : [naturel] [énergique] [mystère] [chuchote] [surpris] [amusé] [sérieux] [calme] [pause]. Elles guident la voix et ne sont pas envoyées comme mots à lire. Maximum : 30 000 caractères. Gardez l’app ouverte.",14);
+  generate=button(layout,"2. Générer la voix expressive");generate.setOnClickListener(v->generate());
+  listen=button(layout,"3. Écouter");listen.setEnabled(false);listen.setOnClickListener(v->play());
+  save=button(layout,"4. Enregistrer WAV");save.setEnabled(false);save.setOnClickListener(v->export());
+  Button stop=button(layout,"Stop");stop.setOnClickListener(v->{job++;api.cancel();stopPlayer();busy(false);status.setText("Arrêté. Les parties incomplètes ne sont pas enregistrées.");});
+  status=label(layout,"Commencez avec 2–3 phrases pour vérifier votre clé et choisir une voix. Les émotions sont des instructions au modèle, pas une garantie de résultat identique à chaque génération.",15);
+ }
+ private TextView label(LinearLayout l,String value,int size){TextView v=new TextView(this);v.setText(value);v.setTextSize(size);v.setPadding(0,14,0,8);l.addView(v);return v;}
+ private EditText edit(LinearLayout l,String hint,int lines){EditText v=new EditText(this);v.setHint(hint);v.setMinLines(lines);v.setGravity(48);v.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);l.addView(v);return v;}
+ private Button button(LinearLayout l,String text){Button b=new Button(this);b.setText(text);b.setAllCaps(false);l.addView(b);return b;}
+ private Spinner spinner(LinearLayout l,String[] values){Spinner s=new Spinner(this);s.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,values));l.addView(s);return s;}
+ private void busy(boolean busy){generate.setEnabled(!busy);voice.setEnabled(!busy);style.setEnabled(!busy);listen.setEnabled(!busy&&finished!=null);save.setEnabled(!busy&&finished!=null);getWindow().getDecorView().setKeepScreenOn(busy);}
+ private void generate(){
+  String text=script.getText().toString().trim(),apiKey=key.getText().toString().trim();
+  if(apiKey.isEmpty()){status.setText("Obtenez une clé Google AI Studio, puis collez-la dans le premier champ.");return;}
+  if(text.length()>30000){status.setText("Maximum : 30 000 caractères, espaces inclus.");return;}
+  final List<List<ScriptPlan.Turn>> batches;
+  try{batches=ScriptPlan.batches(ScriptPlan.parse(text,STYLES[style.getSelectedItemPosition()]+". "+directions.getText().toString()));}catch(Exception e){status.setText(e.getMessage());return;}
+  job++;api.cancel();stopPlayer();final int current=job;final String chosen=VOICES[voice.getSelectedItemPosition()];busy(true);
+  status.setText("Génération : "+batches.size()+" partie(s). Chaque partie consomme le quota Google.");
+  worker.execute(()->{
+   File result=new File(getCacheDir(),"Expressif_"+current+".wav");
+   try(WaveFile wav=new WaveFile(result)){
+    for(int i=0;i<batches.size();i++){
+     if(current!=job)throw new CancellationException();final int number=i+1;
+     runOnUiThread(()->{if(current==job)status.setText("Génération "+number+"/"+batches.size()+"…");});
+     byte[] bytes=api.generate(apiKey,chosen,batches.get(i));if(current!=job)throw new CancellationException();wav.append(bytes);
     }
-    private void setVoices(){
-        int selection=Math.max(0,voices.getSelectedItemPosition());
-        List<String> labels=new ArrayList<>();labels.add("Tom — homme • intégré • hors ligne");
-        for(Voice voice:systemVoices)labels.add("Android — "+voice.getName()+(voice.isNetworkConnectionRequired()?" • en ligne":" • hors ligne"));
-        voices.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));
-        voices.setSelection(Math.min(selection,labels.size()-1));
-    }
-    private void busy(boolean value){preview.setEnabled(!value);save.setEnabled(!value);voices.setEnabled(!value);getWindow().getDecorView().setKeepScreenOn(value);}
-    private void cancel(){generation++; systemId=null;if(tts!=null)tts.stop();if(player!=null){player.release();player=null;}}
-    private void start(boolean exporting){
-        String text=input.getText().toString().trim();
-        if(text.isEmpty()){status.setText("Ajoutez un texte français.");return;}
-        int selected=voices.getSelectedItemPosition();int limit=selected==0?30000:TextToSpeech.getMaxSpeechInputLength();
-        if(text.length()>limit){status.setText("Maximum pour cette voix : "+limit+" caractères (espaces inclus).");return;}
-        cancel();final int job=generation;final float speed=rate;
-        busy(true);status.setText("Génération…");
-        if(selected==0){
-            worker.execute(()->{
-                File file=new File(getCacheDir(),"Tom_"+job+".wav");
-                try{
-                    tom.generate(text,speed,file,new TomEngine.Listener(){
-                        public boolean cancelled(){return job!=generation;}
-                        public void progress(String message){runOnUiThread(()->{if(job==generation)status.setText(message);});}
-                    });
-                    if(job!=generation)return;
-                    if(exporting)export(file,job);
-                    else runOnUiThread(()->play(file,job));
-                }catch(CancellationException ignored){}catch(Exception e){fail(e,job);}
-                finally{if(exporting||job!=generation)file.delete();}
-            });
-        }else{
-            if(!androidReady){busy(false);status.setText("Moteur Android indisponible.");return;}
-            if(tts.setVoice(systemVoices.get(selected-1))==TextToSpeech.ERROR){busy(false);status.setText("Cette voix est indisponible. Choisissez Tom.");return;}
-            tts.setSpeechRate(speed);systemId="ANDROID_"+job;systemSave=exporting;
-            int result;
-            if(exporting){systemFile=new File(getCacheDir(),"Android_"+job+".wav");result=tts.synthesizeToFile(text,null,systemFile,systemId);}
-            else result=tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,systemId);
-            if(result==TextToSpeech.ERROR)fail(new Exception("Impossible de générer cette voix"),job);
-        }
-    }
-    private void play(File file,int job){
-        if(job!=generation){file.delete();return;}
-        try{
-            player=new MediaPlayer();player.setDataSource(file.getPath());player.prepare();
-            player.setOnCompletionListener(p->{p.release();player=null;file.delete();busy(false);status.setText("Terminé.");});
-            player.start();status.setText("Lecture de Tom…");
-        }catch(Exception e){file.delete();fail(e,job);}
-    }
-    private void export(File file,int job)throws Exception{
-        if(job!=generation)return;
-        String name="FrenchVO_"+System.currentTimeMillis()+".wav";
-        ContentValues values=new ContentValues();values.put(MediaStore.Downloads.DISPLAY_NAME,name);
-        values.put(MediaStore.Downloads.MIME_TYPE,"audio/wav");values.put(MediaStore.Downloads.RELATIVE_PATH,"Download/FrenchVO");values.put(MediaStore.Downloads.IS_PENDING,1);
-        ContentResolver resolver=getContentResolver();Uri uri=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);
-        if(uri==null)throw new IOException("Impossible de créer le fichier");
-        try{
-            try(InputStream in=new FileInputStream(file);OutputStream out=resolver.openOutputStream(uri)){
-                if(out==null)throw new IOException("Stockage indisponible");byte[] buf=new byte[8192];int n;
-                while((n=in.read(buf))!=-1){if(job!=generation)throw new CancellationException();out.write(buf,0,n);}
-            }
-            values.clear();values.put(MediaStore.Downloads.IS_PENDING,0);resolver.update(uri,values,null,null);
-            runOnUiThread(()->{if(job==generation&&!destroyed){busy(false);status.setText("Enregistré : Downloads/FrenchVO/"+name);}});
-        }catch(Exception e){resolver.delete(uri,null,null);throw e;}
-    }
-    private void fail(Exception e,int job){runOnUiThread(()->{if(job==generation&&!destroyed){busy(false);status.setText("Erreur : "+e.getMessage());}});}
-    @Override protected void onDestroy(){destroyed=true;cancel();if(tts!=null)tts.shutdown();worker.execute(()->tom.release());worker.shutdown();super.onDestroy();}
+    wav.finish();
+    runOnUiThread(()->{if(current==job&&!destroyed){if(finished!=null)finished.delete();finished=result;busy(false);status.setText("Prêt : écoutez puis enregistrez votre WAV.");}else result.delete();});
+   }catch(Exception e){result.delete();runOnUiThread(()->{if(current==job&&!destroyed){busy(false);status.setText("Génération interrompue : "+e.getMessage());}});}
+  });
+ }
+ private void stopPlayer(){if(player!=null){player.release();player=null;}}
+ private void play(){if(finished==null)return;stopPlayer();try{player=new MediaPlayer();player.setDataSource(finished.getPath());player.prepare();player.setOnCompletionListener(p->{stopPlayer();status.setText("Lecture terminée.");});player.start();status.setText("Lecture…");}catch(Exception e){stopPlayer();status.setText("Erreur de lecture : "+e.getMessage());}}
+ private void export(){
+  final File file=finished;if(file==null)return;busy(true);final int current=job;
+  worker.execute(()->{
+   Uri uri=null;
+   try{
+    ContentValues values=new ContentValues();String name="FrenchVO_Expressif_"+System.currentTimeMillis()+".wav";
+    values.put(MediaStore.Downloads.DISPLAY_NAME,name);values.put(MediaStore.Downloads.MIME_TYPE,"audio/wav");values.put(MediaStore.Downloads.RELATIVE_PATH,"Download/FrenchVO");values.put(MediaStore.Downloads.IS_PENDING,1);
+    uri=getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);if(uri==null)throw new IOException("Stockage indisponible");
+    try(InputStream in=new FileInputStream(file);OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new IOException("Stockage indisponible");byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1){if(current!=job)throw new CancellationException();out.write(buf,0,n);}}
+    values.clear();values.put(MediaStore.Downloads.IS_PENDING,0);getContentResolver().update(uri,values,null,null);
+    runOnUiThread(()->{if(!destroyed){busy(false);status.setText("Enregistré : Downloads/FrenchVO/"+name);}});
+   }catch(Exception e){if(uri!=null)getContentResolver().delete(uri,null,null);runOnUiThread(()->{if(current==job&&!destroyed){busy(false);status.setText("Erreur de sauvegarde : "+e.getMessage());}});}
+  });
+ }
+ @Override protected void onDestroy(){destroyed=true;job++;api.cancel();stopPlayer();worker.shutdown();super.onDestroy();}
 }

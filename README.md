@@ -1,17 +1,12 @@
-# French VO V2 — Android
+# French VO Expressif V3
 
-Bundled French male Tom voice runs offline through Sherpa ONNX. Android French system voices remain available. WAV export goes to Downloads/FrenchVO.
+Android 10+ app for expressive French narration through Gemini 3.8 Flash TTS. Includes Charon/Puck/Kore/Aoede, narration styles and inline direction tags. Internet and a user's Google AI Studio API key are required. Keys stay in memory only, are sent in an HTTPS request header to Google, and are not embedded, persisted or logged. The script is sent to Google on Generate. Free-tier quota depends on the user's Google project; use a project without billing to avoid paid usage. No automatic paid-model fallback.
 
-Tom input limit: 30,000 UTF-16 characters including spaces. Long narration is split into <=600-character parts and streamed to one 16-bit mono 44.1 kHz WAV. System voices retain their engine limit, normally 4,000 characters. Keep the app open during synthesis; Stop cancels a job and discards unfinished exports.
+Tags: [naturel] [énergique] [mystère] [chuchote] [surpris] [amusé] [sérieux] [calme] [pause]. Delivery tags become speech_metadata.style fields, and pause becomes <short pause>. Unknown tags are rejected. Maximum 30,000 characters, batched into up to 1,200 characters per request. Keep the app open. Long audio requires several requests and may exceed free quotas or vary across parts.
 
-Requires Android 10+ and arm64-v8a. First use prepares voice files in private storage. App is larger because it includes the model and native runtime. No paid API or account required.
+Generate → listen → save WAV to Downloads/FrenchVO. The app uses a separate application ID and can coexist with V2. It does not load the native Tom runtime that crashed on the user's phone. The cause of that V2 crash has not been established.
 
-## Build
+Validation: unit tests cover direction removal, long script preservation and WAV concatenation/mismatched-format rejection. Build validation does not establish successful live API access or narration quality; those need the user's key. No real API key is included in tests.
 
-GitHub Actions downloads the pinned Sherpa 1.13.8 runtime and the upstream Tom model, includes license notices, tests text splitting and French audio synthesis, and builds the debug APK with Gradle 8.9 / Java 17 / Android SDK 35.
-
-Download FrenchVO-V2-APK in Actions. V1 was signed with a temporary debug key; uninstall V1 before installing V2 if Android reports a signature mismatch. Audio files already exported to Downloads remain accessible. The V2 signing key is cached for future builds.
-
-## Third-party source and notices
-
-See app/src/main/assets/NOTICES.txt. Tom model/dataset is credited to Tjiho/Piper, Sherpa ONNX to k2-fsa, and phonemization to espeak-ng. This app's source is available under AGPL-3.0-or-later; bundled components retain their licenses. The workflow embeds corresponding license texts into the APK.
+Official API contract: https://ai.google.dev/gemini-api/docs/generate-content/speech-generation
+Pricing: https://ai.google.dev/gemini-api/docs/pricing
