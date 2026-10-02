@@ -1,0 +1,8 @@
+French VO V2 source: https://github.com/giorgikabulashvili0-debug/FrenchVO
+Tom French voice: https://huggingface.co/rhasspy/piper-voices/tree/main/fr/fr_FR/tom/medium
+Voice creator/dataset: https://git.bksp.space/Tjiho/French-tts-model-piper
+The Tom model card lists AGPLv3 for its dataset. AGPL-3.0.txt is included.
+Sherpa ONNX runtime v1.13.8: https://github.com/k2-fsa/sherpa-onnx (Apache-2.0).
+Piper voice conversion: https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+espeak-ng: https://github.com/espeak-ng/espeak-ng (GPL-3.0).
+The complete application source and build instructions are in the public repository.
