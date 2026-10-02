@@ -1,7 +1,8 @@
-name: Build Android APK
+name: Build Expressive Android APK
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,32 +21,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Preserve debug signing key
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: frenchvo-debug-signing-v2
-      - name: Prepare bundled Tom voice
-        run: |
-          mkdir -p app/libs app/src/main/assets
-          curl -fL --retry 3 https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar -o app/libs/sherpa-onnx-1.13.8.aar
-          curl -fL --retry 3 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-tom-medium.tar.bz2 -o tom.tar.bz2
-          tar -xjf tom.tar.bz2
-          mv vits-piper-fr_FR-tom-medium app/src/main/assets/tom
-          curl -fL --retry 3 https://www.gnu.org/licenses/agpl-3.0.txt -o app/src/main/assets/AGPL-3.0.txt
-          curl -fL --retry 3 https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.13.8/LICENSE -o app/src/main/assets/SHERPA-LICENSE.txt
-          curl -fL --retry 3 https://raw.githubusercontent.com/espeak-ng/espeak-ng/master/COPYING -o app/src/main/assets/ESPEAK-LICENSE.txt
-      - name: Verify French voice synthesis
-        run: |
-          python -m pip install sherpa-onnx==1.13.8
-          python scripts/check_voice.py
-      - name: Build APK
+      - name: Verify and build
         run: gradle --no-daemon testDebugUnitTest assembleDebug
-      - name: Name APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk FrenchVO_V2.apk
+      - name: Package APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk FrenchVO_Expressif_V3.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: FrenchVO-V2-APK
-          path: FrenchVO_V2.apk
+          name: FrenchVO-Expressif-V3
+          path: FrenchVO_Expressif_V3.apk
           if-no-files-found: error
           retention-days: 30
